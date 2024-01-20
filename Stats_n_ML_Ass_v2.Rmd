@@ -1,6 +1,4 @@
 ---
-title: "Statistics & Machine Learning 1 : Assignment 1"
-author: "Student ID: 10133613"
 date: "15/11/2022"
 output: pdf_document
 ---
