@@ -1,0 +1,565 @@
+---
+title: "Statistics & Machine Learning 1 : Assignment 1"
+author: "Student ID: 10133613"
+date: "15/11/2022"
+output: pdf_document
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+library(dplyr)
+library(caTools)
+library(caret)
+library(pROC)
+library(ROCR)
+library(car)
+library(ROSE)
+library(mlbench)
+```
+
+```{r include=FALSE}
+PimaDiabetes <- read.csv("~/Downloads/PimaDiabetes.csv")
+
+head(PimaDiabetes)
+
+```
+
+\underline{Description of data and origin}
+
+The dataset contains observations of 750 women of the Pima Indian ethnicity and 8 medical variables, along with 1 outcome variable that indicates whether the patient has diabetes or not.  Table 1 expands on all the variables that exist within the dataset. All the variables are in numeric form.
+
+\begin{table}[h]
+\begin{center}
+\begin{tabular}{|l|l|}
+\hline
+Medical predictor variable & Description \\ \hline
+Pregnancies & No. of times the woman has been pregnant \\ \hline
+Glucose & Plasma glucose concentration (mg/dl) \\ \hline
+Blood pressure & Diastolic blood pressure (mm Hg) \\ \hline
+Skin Thickness & Triceps skin fold thickness (mm) \\ \hline
+Insulin & Insulin concentration (?? U/ml) \\ \hline
+BMI & Body mass index (kg/m2) \\ \hline
+Diabete Pedigree & Score to measure the genetic influence on diabetic risk, higher score means higher risk \\ \hline
+Age & In years \\ \hline
+Outcome & 1 for diabetic women, 0 otherwise \\ \hline
+\end{tabular}
+\caption{Data description}
+\label{tab:my-table}
+\end{center}
+\end{table}
+
+
+The data was originally collected from USAs National Institute of Diabetes and Digestive and Kidney Diseases study on Pima Indians near Phoenix, Arizona. This group has been under continuous study by the institute due to the high incidence of diabetes cases among the population. In their study, Bennett et al.(1) concluded that the prevalence of diabetes is 50% among Pima Indians aged 35 and over. This is alarmingly high, as, in comparison, the overall prevalence of diabetes in the United States and Europe ranges between 1-3% only. Thus, in this report, I will attempt to develop a predictive model to predict the risk of diabetes of an individual, given their medical history.
+
+
+
+
+```{r}
+summary(PimaDiabetes)
+str(PimaDiabetes)
+dim(PimaDiabetes)
+```
+
+
+\underline{Data quality issues} 
+
+At first glance, there seems to be no missing values in the dataset as seen above. However,  notice that the minimum value is 0 for the medical predictors - glucose, blood pressure, skin thickness, insulin and BMI - which is unrealistic for a living human. Thus, some modifications will need to be conducted to the data to prepare it for analysis and modelling. Besides that, there is imbalance in the outcome variable, where there are 490 non-diabetic observation and only 260 diabetic observations, as can be observed in the followign chart:				 	
+```{r}
+ggplot(PimaDiabetes) + geom_bar(aes(as.character(Outcome),fill=Outcome), show.legend = FALSE)
+table(PimaDiabetes$Outcome)
+```
+As such, this needs to be considered when creating prediction models.
+
+# 2. Exploratory Data Analysis
+## Summary Statistics
+```{r}
+summary(PimaDiabetes)
+```
+
+
+## Changing unrealistic 0s to NAs
+
+```{r}
+
+PD_transformed = PimaDiabetes %>% mutate_at(.vars = 2:6,~na_if(.,0))
+na_check = colSums(is.na(PD_transformed))
+na_check_pct = na_check*100/750
+data.frame(na_check, na_check_pct)
+
+```
+From the above result, it can be observed that columns Insulin and Skin Thickness had the highest percentage of missing (0s) values.
+
+## Summary statistics 2: After Treating 0s as Missing Values
+```{r}
+# check if after changing 0 to NA, does the min and max amount make sense for each variable? 
+summary(PD_transformed)
+
+
+```
+## Visualizing distribution
+```{r}
+##let's look at the distribution for each variable
+data_long <- PD_transformed %>% 
+        pivot_longer(colnames(PD_transformed)) %>% 
+        as.data.frame()
+
+ggplot(data_long, aes(x = value)) +
+        geom_histogram(aes(fill=name),bins=10)+
+        facet_wrap(~name, scales = "free")
+    
+
+st_dev = apply(PD_transformed[,1:8],2,sd, na.rm = TRUE)
+data.frame(st_dev)
+```
+From the above histogram it is observed that; \\
+1. Age, diabetes pedigree,insulin and pregnancies is skewed to the right. \\
+2. BMI and blood pressure has a somewhat normal distribution \\
+3. The outcome variable has class imbalance, only 34.7% (260 observations) has diabtes, while the remaining does not have diabetes
+
+```{r}
+ggplot(PimaDiabetes, aes( Outcome)) + geom_bar(aes(fill="red"))
+
+```
+
+## Correlation analysis
+```{r}
+#correlation
+PD_cor = cor(PD_transformed, use = "na.or.complete")
+
+corrplot(PD_cor,method = "number", number.cex = 0.8, number.digits = 1)
+```
+
+The correlation between the Outcome variable and all other variable in the dataset is between moderate or weak.
+
+
+# 3. ThreeOrMoreKids?
+```{r}
+##creating a new column ThreeOrMoreKids
+PD_kids = PD_transformed %>% mutate(ThreeOrMoreKids = if_else(Pregnancies>=3,1,0))
+test = PimaDiabetes %>% mutate(ThreeOrMoreKids = if_else(Pregnancies>=3,1,0))
+```
+
+```{r, fig.align='center'}
+##creating_model
+###binomial is to specify logistic regression
+model_kids <- glm(Outcome ~ ThreeOrMoreKids, data = PD_kids, family = binomial(link=logit))
+summary(model_kids)
+```
+### Probability of getting diabetes, provided having 2 or less children
+
+Formula for logistic regression:
+$$ log (\frac{p_i}{1-p_i}) = \beta_0 + \beta_1X_{1i} \tag{1.1}$$
+where p_i is probability of getting diabetes,
+and X_i is equals to 1 for individuals with 3 or more kids and 0 otherwise. Based on the outcome of the logistic regression above,
+
+
+$$  \frac{p_i}{1-p_i} = exp(\beta_0 + \beta_1X_{1i}) $$
+
+$$ p_i = \frac{exp(\beta_0+\beta_1X_{1i})}{1+exp(\beta_0+\beta_1X_{1i})} $$
+
+
+$$ \beta_0 = -1.1462 $$
+
+$$ \beta_1 = 0.8813 $$
+$$ let\ x = \beta_0 +\beta_1X_1  $$
+when the individual has 3 or more kids, 
+$$  x =  -1.1462+0.8813 $$
+when the individual has less than 3 kids,
+$$  x =  -1.1462 $$
+
+```{r}
+threeormore = -1.1462+0.8813
+lessthantwo = -1.1462
+```
+
+$$ p_i = \frac{exp(x)}{1+exp(x)} $$
+
+
+```{r}
+## 3ormore
+prob_forthreeormore = exp(threeormore)/(1+exp(threeormore))
+prob_forthreeormore
+prob_fortwoorless = exp(lessthantwo)/(1+exp(lessthantwo))
+prob_fortwoorless
+```
+
+# 4. Predicting Prevalence of Diabetes
+### Feature selection
+#### Handling missing values 
+
+##### Strategy1: Drop columns with high volume of missing data
+The columns Skin Thickness and Insulin is dropped from the analysis due to high incidence of 0 values for these columns. Furthermore, past studies has higlighted that it is difficult to accurately measure skin thickness as it is prone to huge variations both within and between observers (Ruth M. Ayling, in Clinical Biochemistry: Metabolic and Clinical Aspects (Third Edition)). 
+
+##### Strategy2: Impute missing values using median of columns by outcome
+
+For the remaining missing values, the median is imputed to replace them, using the median value of each column, based on the outcome variable. This is due to the fact that the outcome is imbalance. The following result shows the median for each columns by outcome
+
+```{r}
+PD_transformed %>%                                       
+  group_by(Outcome) %>%                         
+  summarise_at(vars(Glucose,BloodPressure,BMI),            
+               list(name = median), na.rm = TRUE)
+
+```
+
+```{r}
+clean_PD = PD_transformed
+m_Glucose1 = lapply(PD_transformed %>% filter(Outcome==1) %>% summarise_at(vars(Glucose),            
+               median, na.rm = TRUE),as.numeric)
+m_Glucose0 = lapply(PD_transformed %>% filter(Outcome==0) %>% summarise_at(vars(Glucose),            
+               median, na.rm = TRUE),as.numeric)
+
+m_BP1 = PD_transformed %>% filter(Outcome==1) %>% summarise_at(vars(BloodPressure),            
+               median, na.rm = TRUE)
+m_BP0 = PD_transformed %>% filter(Outcome==0) %>% summarise_at(vars(BloodPressure),            
+               median, na.rm = TRUE)
+
+m_BMI1 = PD_transformed %>% filter(Outcome==1) %>% summarise_at(vars(BMI),            
+               median, na.rm = TRUE)
+m_BMI0 = PD_transformed %>% filter(Outcome==0) %>% summarise_at(vars(BMI),            
+               median, na.rm = TRUE)
+```
+
+```{r}
+clean_PD = clean_PD %>% 
+        mutate(Glucose = ifelse(is.na(Glucose) & Outcome == 1,
+                        as.numeric(m_Glucose1) ,
+                ifelse(is.na(Glucose) & Outcome == 0,
+                        as.numeric(m_Glucose0),
+                       Glucose)))
+ 
+clean_PD = clean_PD %>% 
+        mutate(BloodPressure = ifelse(is.na(BloodPressure) & Outcome == 1,
+                        as.numeric(m_BP1) ,
+                ifelse(is.na(BloodPressure) & Outcome == 0,
+                        as.numeric(m_BP0),
+                       BloodPressure)))    
+
+clean_PD = clean_PD %>% 
+        mutate(BMI = ifelse(is.na(BMI) & Outcome == 1,
+                        as.numeric(m_BMI1) ,
+                ifelse(is.na(BMI) & Outcome == 0,
+                        as.numeric(m_BMI0),
+                       BMI)))  
+
+##split dataset to train and test by preserving ratio of Outcome
+
+train_index <- sample.split(Y = clean_PD$Outcome, SplitRatio = 0.8)
+        
+PD_train <- clean_PD[train_index, ]
+PD_test <- clean_PD[!train_index, ]
+
+# control = trainControl(method = "repeatedcv",
+                        # number = 5,
+                        # repeats = 3,
+                        # summaryFunction = twoClassSummary,
+                        # classProbs = TRUE)
+
+# model1_fit = train(Outcome~.,
+#                    data = PD_train,
+#                    )
+```
+
+#### Model1: Logistic regression
+
+```{r}
+model1 <- glm(Outcome ~ Pregnancies + Glucose + BloodPressure + BMI + DiabetesPedigree + Age , data = PD_train, family = binomial)
+summary(model1)
+
+as.table(vif(model1))
+```
+The VIF value of all the variables are low. It is assumed then that there is no multicollinearity issues within the chosen variables.
+
+\underline{Choosing a threshhold for prediction}
+The initial threshhold is set to 0.5.
+
+```{r}
+#setting threshold
+th = 0.5
+
+m1_pred <- predict(object = model1,
+                      newdata = PD_test ,
+                      type = "response" )
+
+table(PD_test$Outcome, m1_pred>th)
+
+cm1 = confusionMatrix(data = as.factor(ifelse(m1_pred>th,1,0)) ,
+                reference =  as.factor(PD_test$Outcome),
+                positive = "1")
+cm1
+```
+
+#### Specificity vs Sensitivity Discussion
+Is Specificity more important than Sensitivity? In diabetes detection, early diagnosis is important and 
+```{r}
+roc1=roc(PD_test$Outcome,m1_pred,plot=TRUE,legacy.axes=TRUE)
+
+
+roc_pred1 <- prediction(predictions = m1_pred  , labels = PD_test$Outcome)
+roc_perf1 <- performance(roc_pred1 , "tpr" , "fpr")
+plot(roc_perf1,
+     col = "blue",
+     print.cutoffs.at= seq(0,1,0.1),
+     text.adj=c(-0.2,1.7),
+     main = "ROC Curve for Model 1")
+
+roc1$auc
+```
+
+#### Model 2: Logistic Regression with Undersampling
+```{r}
+PD_undersample <- ovun.sample(Outcome~.,
+                              data = PD_train,
+                              method = "under")$data
+
+table(PD_undersample$Outcome)
+```
+
+```{r}
+model2 = glm(Outcome ~ Pregnancies + Glucose + BloodPressure + BMI + DiabetesPedigree + Age , 
+             data = PD_undersample, family = binomial)
+
+summary(model2)
+
+```
+
+```{r}
+
+m2_pred <- predict(object = model2,
+                      newdata = PD_test ,
+                      type = "response" )
+
+table(PD_test$Outcome, m2_pred>th)
+
+cm2 = confusionMatrix(data = as.factor(ifelse(m2_pred>th,1,0)) ,
+                reference =  as.factor(PD_test$Outcome),
+                positive = "1")
+cm2
+```
+```{r}
+roc2=roc(PD_test$Outcome,m2_pred,plot=TRUE,legacy.axes=TRUE)
+
+plot(roc2)
+
+roc2$auc
+
+roc_pred2 <- prediction(predictions = m2_pred  , labels = PD_test$Outcome)
+roc_perf2 <- performance(roc_pred2 , "tpr" , "fpr")
+plot(roc_perf2,
+     col="red", main="ROC Curve for Model2",
+     print.cutoffs.at= seq(0,1,0.1),
+     text.adj=c(-0.2,1.7))
+
+roc2$auc
+```
+
+AUC has dropped slightly using the Undersampling method
+
+#### Model 3:Logistic Regression with Random-OverSampling Examples (ROSE)
+```{r}
+PD_rose <- ROSE(Outcome~., data = PD_train)$data
+
+table(PD_rose$Outcome)
+```
+
+```{r}
+model3 = glm(Outcome ~ Pregnancies + Glucose + BloodPressure + BMI + DiabetesPedigree + Age , 
+             data = PD_rose, family = binomial)
+
+summary(model3)
+
+
+
+m3_pred <- predict(object = model3,
+                      newdata = PD_test ,
+                      type = "response" )
+
+table(PD_test$Outcome, m3_pred>th)
+
+
+
+cm3 = confusionMatrix(data = as.factor(ifelse(m3_pred>th,1,0)) ,
+                reference =  as.factor(PD_test$Outcome),
+                positive = "1")
+cm3
+
+roc3=roc(PD_test$Outcome,m3_pred,plot=TRUE,legacy.axes=TRUE)
+
+plot(roc3)
+
+roc3$auc
+
+roc_pred3 <- prediction(predictions = m3_pred  , labels = PD_test$Outcome)
+roc_perf3 <- performance(roc_pred3 , "tpr" , "fpr")
+plot(roc_perf3,
+     col = "green",
+     main = "ROC Curve for all 3 Models",
+     print.cutoffs.at= seq(0,1,0.05),
+     text.adj=c(-0.2,1.7))
+plot(roc_perf1, add = TRUE, col = "blue")
+plot(roc_perf2, add = TRUE, col = "red")
+legend("bottomright", legend = c("Model1","Model2","Model3"),
+       col=c(par("fg"),"blue","red","green"),
+       fill=c("blue","red","green"))
+
+roc3$auc
+```
+
+Model Comparison at 0.5 Threshold
+At 0.5 benchmark, Model3 performed the best in terms of Sensitivity, while Model1 performed the best in terms of Specificity.
+```{r}
+Sensitivity_table = c(Model1_=cm1$byClass[1],Model2_=cm2$byClass[1],Model3_=cm3$byClass[1])
+Specificity_table = c(Model1_=cm1$byClass[2],Model2_=cm2$byClass[2],Model3_=cm3$byClass[2])
+
+Sensitivity_table
+Specificity_table
+```
+
+Model Comparison at 0.4
+```{r}
+Sensitivity_table = c(Model1_=cm1$byClass[1],Model2_=cm2$byClass[1],Model3_=cm3$byClass[1])
+Specificity_table = c(Model1_=cm1$byClass[2],Model2_=cm2$byClass[2],Model3_=cm3$byClass[2])
+
+Sensitivity_table
+Specificity_table
+
+```
+
+
+
+
+#### cross validation
+#### Model1: Logistic regression CV method
+
+```{r}
+# to create index for stratified train-test cross-validation
+cvIndex = createFolds(factor(clean_PD$Outcome),5,returnTrain = T)
+
+# creating cv 
+control = trainControl(index = cvIndex, method = "cv", number = 5, savePredictions = T)
+
+mod1_fit = train(as.factor(Outcome) ~ Pregnancies + cl_Glucose + cl_BloodPressure + cl_BMI 
+                 + DiabetesPedigree + Age , 
+                 data = clean_PD, 
+                 method = "glm", family = binomial,
+                 trControl = control)
+  
+summary(mod1_fit)
+
+cm_test = confusionMatrix(table((mod1_fit$pred)$pred,(mod1_fit$pred)$obs),positive = "1")
+cm_test
+
+pred <- mod1_fit$pred
+
+pred$equal <- ifelse(pred$pred == pred$obs, 1,0)
+
+eachfold <- pred %>%                                        
+  group_by(Resample) %>%                         
+  summarise_at(vars(equal),                     
+               list(Accuracy = mean))              
+eachfold
+
+#https://stackoverflow.com/questions/35907477/caret-package-stratified-cross-validation-in-train-function
+#https://www.google.com/search?q=cross+validation+in+r+logistic+regression&oq=cross+valida&aqs=chrome.0.35i39j69i57j0i131i433i512j0i20i263i512j0i512j69i60l3.33533j0j4&sourceid=chrome&ie=UTF-8#fpstate=ive&vld=cid:65029275,vid:c-kqw0Yf6BE
+
+#https://www.analyticsvidhya.com/blog/2021/03/introduction-to-k-fold-cross-validation-in-r/
+```
+
+```{r}
+th = 0.5
+
+fm1_pred <- predict(object = model1,
+                      newdata = PD_test ,
+                      type = "response" )
+
+table(PD_test$Outcome, m1_pred>th)
+
+cm1 = confusionMatrix(data = as.factor(ifelse(m1_pred>th,1,0)) ,
+                reference =  as.factor(PD_test$Outcome),
+                positive = "1")
+cm1
+```
+
+```{r}
+roc1=roc(PD_test$Outcome,m1_pred,plot=TRUE,legacy.axes=TRUE)
+
+plot(roc1)
+
+roc1$auc
+
+roc_pred1 <- prediction(predictions = m1_pred  , labels = PD_test$Outcome)
+roc_perf1 <- performance(roc_pred1 , "tpr" , "fpr")
+plot(roc_perf1,
+     colorize = TRUE,
+     print.cutoffs.at= seq(0,1,0.1),
+     text.adj=c(-0.2,1.7))
+```
+
+#### Model 2: Undersampling using cv
+```{r}
+# to create index for stratified train-test cross-validation
+cvIndex2 = createFolds(factor(PD_undersample$Outcome),5,returnTrain = T)
+
+# creating cv 
+control2 = trainControl(index = cvIndex2, method = "cv", number = 5, savePredictions = T)
+
+mod2_fit = train(as.factor(Outcome) ~ Pregnancies + cl_Glucose + cl_BloodPressure + cl_BMI 
+                 + DiabetesPedigree + Age , 
+                 data = PD_undersample, 
+                 method = "glm", family = binomial,
+                 trControl = control2)
+summary(mod2_fit)
+mod2_fit 
+
+cm_test2 = confusionMatrix(table((mod2_fit$pred)$pred,(mod2_fit$pred)$obs), positive = "1")
+cm_test2
+```
+
+#### Model 3: Oversampling with ROSE using cv
+```{r}
+# to create index for stratified train-test cross-validation
+cvIndex3 = createFolds(factor(PD_rose$Outcome),5,returnTrain = T)
+
+# creating cv 
+control3 = trainControl(index = cvIndex3, method = "cv", number = 5, savePredictions = T)
+
+mod3_fit = train(as.factor(Outcome) ~ Pregnancies + cl_Glucose + cl_BloodPressure + cl_BMI 
+                 + DiabetesPedigree + Age , 
+                 data = PD_rose, 
+                 method = "glm", family = binomial,
+                 trControl = control3)
+summary(mod3_fit)
+mod3_fit 
+
+cm_test3 = confusionMatrix(table((mod3_fit$pred)$pred,(mod3_fit$pred)$obs), positive = "1")
+cm_test3
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+model2 = glm(Outcome ~ Pregnancies + cl_Glucose + cl_BloodPressure + cl_BMI + DiabetesPedigree + Age , 
+             data = PD_undersample, family = binomial)
+
+summary(model2)
+
+```
+
+```{r}
+
+to_pred <- predict(object = model2,
+                      newdata = ToPredict ,
+                      type = "response" )
+
+ToPredict$Outcome = ifelse(to_pred>0.5,1,0)
+
+
+ToPredict
+```
